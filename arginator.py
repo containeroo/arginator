@@ -13,7 +13,8 @@ try:
     import gitlab
     import requests
     import semver
-    import yaml
+    from ruamel.yaml import YAML
+    from ruamel.yaml.compat import StringIO
     from gitlab import Gitlab
     from gitlab.exceptions import (GitlabAuthenticationError,
                                    GitlabCreateError, GitlabGetError,
@@ -27,9 +28,8 @@ except Exception:
 __version__ = "0.0.1"
 
 
-Pattern = namedtuple("Pattern", ['target_revision', 'mr_title', ])
+Pattern = namedtuple("Pattern", ['mr_title', ])
 pattern = Pattern(
-    target_revision="targetRevision: {VERSION}",
     mr_title=r"^(Update {CHART_NAME} chart to )v?(\d+.\d+.\d+).*",
 )
 
@@ -53,6 +53,19 @@ templates = Templates(
 
 Argo = namedtuple("Argo", ['url', 'charts'])
 
+class MyYAML(YAML):
+    """ add functionality to dumpt into a string """
+    def dump(self, data, stream=None, **kw):
+        inefficient = False
+        if stream is None:
+            inefficient = True
+            stream = StringIO()
+        YAML.dump(self, data, stream, **kw)
+        if inefficient:
+            return stream.getvalue()
+
+yaml = MyYAML()
+yaml.default_flow_style = False
 
 class CallCounted:
     """Decorator to determine number of calls for a method"""
@@ -216,7 +229,7 @@ def process_yaml(search_dir: str) -> Argo:
             continue
         try:
             with open(item) as stream:
-                content = yaml.safe_load(stream)
+                content = yaml.load(stream)
         except Exception:
             # ignore unparsable yaml files, since argocd already does this
             return
@@ -307,7 +320,7 @@ def get_helm_chart(chart_url: str, verify_ssl: bool = False) -> dict:
         raise urllib3.exceptions.ResponseError(f"'{chart_url}' returned: {repo_response.status_code}")
 
     try:
-        repo_charts = yaml.safe_load(repo_response.content)
+        repo_charts = yaml.load(repo_response.content)
     except Exception as e:
         raise urllib3.exceptions.DecodeError(f"unable to parse '{chart_url}'. {str(e)}")
 
@@ -665,21 +678,18 @@ def update_project(project: Project,
             raise GitlabCreateError(f"unable to create merge request. {str(e)}")
 
     try:
-        old_chart_version = re.compile(pattern=pattern.target_revision.format(VERSION=old_version),
-                                       flags=re.IGNORECASE)
-        new_chart_version = pattern.target_revision.format(VERSION=new_version)
         with open(file=local_file_path, mode="r+") as f:
-            old_content = f.read()
-            new_content = re.sub(pattern=old_chart_version,
-                                 repl=new_chart_version,
-                                 string=old_content)
+            content = yaml.load(f)
 
-            update_file(
-                project=project,
-                branch_name=branch_name,
-                commit_msg=mergerequest_title,
-                content=new_content,
-                path_to_file=gitlab_file_path)
+        content = update_value(dictionary=content,
+                               path='spec.source.targetRevision',
+                               value=new_version)
+        update_file(
+            project=project,
+            branch_name=branch_name,
+            commit_msg=mergerequest_title,
+            content=yaml.dump(content),
+            path_to_file=gitlab_file_path)
     except Exception as e:
         raise GitlabUploadError(f"unable to upload file. {str(e)}")
 
@@ -936,6 +946,42 @@ def update_file(project: Project,
     logging.info(f"successfully update file '{path_to_file}'")
 
     return commit
+
+
+def update_value(dictionary: dict,
+                 path: str,
+                 value: object,
+                 delimiter: str = ".") -> dict:
+    """update a value from a dict. path to key can be passed by a string, separated by a delimiter
+    Args:
+        dictionary (dict): dict to be updated
+        path (str): path with keys, separated by delimiter
+        value (object): value to update.
+        delimiter (str, optional): delimiter for path. Defaults to ".".
+    Raises:
+        TypeError: dictionary object is not a dict
+        KeyError: key from path not found
+    Returns:
+        dict: updated dictionary with new value
+    """
+    if not isinstance(dictionary, dict):
+        raise TypeError(f"you must pass a dict. You pass {type(dictionary)}")
+
+    keys = path.split(delimiter)
+    key = keys[0]
+    if not dictionary.get(key):
+        raise KeyError(f"key '{key}' not found")
+    if len(keys) > 1:
+        path = delimiter.join(keys[1:])
+        update_value(
+            dictionary=dictionary[key],
+            path=path,
+            value=value,
+            delimiter=delimiter
+        )
+    else:
+        dictionary[key] = value
+    return dictionary
 
 
 def send_slack(chart_updates: list, slack_token: str, slack_channel: str):
