@@ -40,13 +40,13 @@ Templates = namedtuple("templates", ['branch_name',
                                     ]
 )
 templates = Templates(
-    branch_name="helminator/{CHART_NAME}",
+    branch_name="arginator/{CHART_NAME}",
     merge_request_title="Update {CHART_NAME} chart to {NEW_VERSION}",
     description="| Chart | Change |\n"
                 "| :-- |:-- |\n"
                 "| {NAME} | `{OLD_VERSION}` -> `{NEW_VERSION}`|\n"
                 "---\n"
-                "### Helminator configuration\n"
+                "### Arginator configuration\n"
                 "{CONFIG}",
     slack_notification="{LINK_START}{CHART_NAME}{LINK_END}: `{OLD_VERSION}` -&gt; `{NEW_VERSION}`",
 )
@@ -83,7 +83,7 @@ def check_env_vars():
     assignees = ([] if not assignees else [a.strip() for a in assignees.split(",") if a])
 
     labels = os.environ.get("ARGINATOR_GITLAB_LABELS")
-    labels = [] if labels == "" else ["helminator"] if labels is None else [l.strip() for l in labels.split(",") if l]
+    labels = [] if labels == "" else ["arginator"] if labels is None else [l.strip() for l in labels.split(",") if l]
 
     slack_token = os.environ.get("ARGINATOR_SLACK_API_TOKEN")
     slack_channel = os.environ.get("ARGINATOR_SLACK_CHANNEL")
@@ -618,7 +618,7 @@ def update_project(project: Project,
             mr.merge(merge_when_pipeline_succeeds=True)
     except GitlabAuthenticationError as e:
         raise GitlabAuthenticationError(
-                "Authentication not set correctly. 'Helminator' User must have the role 'Maintainer'")
+                "Authentication not set correctly. 'Arginator' User must have the role 'Maintainer'")
     except Exception as e:
         raise Exception(f"cannot merge MR. {e}")
 
