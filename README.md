@@ -49,8 +49,6 @@ To receive Slack notifications you have to create a Slack App. Please refer to [
 
 ## Usage
 
-Ansible Playbook example: [playbook-k8s](https://github.com/containeroo/playbook-k8s)
-
 ### GitLab
 
 If you want to use arginator in a GitLab CI / CD job, you can use the follwing `.gitlab-ci.yml` as an example:
@@ -70,7 +68,7 @@ arginator:
   script: python /app/arginator.py
 ```
 
-In order to set the configration environment variables, go to your project (repository) containing the playbook.  
+In order to set the configration environment variables, go to your project (repository) containing the ArgoCD manifests.  
 Go to `Settings` -> `CI / CD` -> `Variabels` -> `Expand`.
 
 After you have set all variables you can create a pipeline schedule. This ensures your job runs regularly.
