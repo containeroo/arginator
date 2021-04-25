@@ -51,6 +51,8 @@ templates = Templates(
     slack_notification="{LINK_START}{CHART_NAME}{LINK_END}: `{OLD_VERSION}` -&gt; `{NEW_VERSION}`",
 )
 
+Argo = namedtuple("Argo", ['url', 'charts'])
+
 
 class CallCounted:
     """Decorator to determine number of calls for a method"""
@@ -64,7 +66,8 @@ class CallCounted:
         return self.method(*args, **kwargs)
 
 
-def check_env_vars():
+def check_env_vars() -> namedtuple:
+    """check_env_vars parse env vars"""
     ci_dir_project = os.environ.get("CI_PROJECT_DIR")
     search_dir = os.environ.get("ARGINATOR_ROOT_DIR", ci_dir_project)
     enable_prereleases = os.environ.get("ARGINATOR_ENABLE_PRERELEASES", "false").lower() == "true"
@@ -146,6 +149,11 @@ def check_env_vars():
 
 
 def setup_logger(loglevel: str = 'info'):
+    """setup_logger setup logger
+
+    Args:
+        loglevel (str, optional): loglevel to set. Defaults to 'info'.
+    """
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     urllib3.disable_warnings()
 
@@ -179,7 +187,23 @@ def setup_logger(loglevel: str = 'info'):
     logging.critical = CallCounted(logging.critical)
 
 
-def process_yaml(search_dir: str):
+def process_yaml(search_dir: str) -> Argo:
+    """process_yaml iterate over yaml files and extract repo URL, Helm chart name and version
+
+    Args:
+        search_dir (str): directory to search yml & yaml files
+
+    Raises:
+        NotADirectoryError: 'search_dir' is not a directory
+
+    Returns:
+        namedTuple: Argo(url=str, charts=List[dict])
+                    url: path to helm chart repo
+                    charts: dict with following keys:
+                            chart_name: name of chart
+                            version: current version of chart
+                            yaml_path: path to yaml file
+    """
     search_dir = Path(search_dir)
     argo_helm_charts = defaultdict(list)
 
@@ -200,8 +224,10 @@ def process_yaml(search_dir: str):
             return
 
         if content.get("kind") != "Application":
+            logging.debug(f"skip manifest '{item}' because it is not of kind 'Application'")
             continue
         if content.get("spec") and not content['spec'].get("source"):
+            logging.debug(f"skip manifest '{item}' because it does not contain the path 'spec.source'")
             continue
         chart_name = content['spec']['source']['chart']
         repo_url = content['spec']['source']['repoURL']
@@ -214,15 +240,28 @@ def process_yaml(search_dir: str):
                 "yaml_path": item
             }
         )
+
+    # convert list of tuple to namedTuple (Argo)
     argo_charts = []
-    Argo = namedtuple("Argo", ['url', 'charts'])
     for item in argo_helm_charts.items():
         argo_charts.append(Argo(url=item[0], charts=item[1]))
 
     return argo_charts
 
 
-def process_argo_helm_charts(argo_helm_charts: dict) -> List[dict]:
+def process_argo_helm_charts(argo_helm_charts: List[Argo]) -> List[dict]:
+    """process_argo_helm_charts process found helm charts from argocd manifests
+
+    Args:
+        argo_helm_charts (List[Argo]): list of Argo namedTuple
+
+    Returns:
+        List[dict]: list of dict with following keys:
+            chart_name: name of chart
+            old_version: current version of chart from ArgoCD manifest
+            new_version: newest available Helm chart version
+            yaml_path: path to ArgoCD manifest
+    """
     chart_updates = []
     for argo_helm_chart in argo_helm_charts:
         chart_url = argo_helm_chart.url
@@ -242,37 +281,58 @@ def process_argo_helm_charts(argo_helm_charts: dict) -> List[dict]:
 
 
 def get_helm_chart(chart_url: str, verify_ssl: bool = False) -> dict:
+    """get_helm_chart get helm chart from a repo
+
+    Args:
+        chart_url (str): URL to helm chart
+        verify_ssl (bool, optional): check SSL certificate. Defaults to False.
+
+    Raises:
+        urllib3.exceptions.HTTPError: unable to get helm chart
+        urllib3.exceptions.ResponseError: http status code is not 200
+        urllib3.exceptions.DecodeError: unable to response into a dict
+
+    Returns:
+        dict: dictionary with helm chart repos
+    """
     chart_url = chart_url.rstrip("/")
     try:
         logging.debug(f"get helm charts from '{chart_url}'")
         chart_url = f"{chart_url}/index.yaml"
         repo_response = requests.get(url=chart_url, verify=verify_ssl)
     except Exception as e:
-        raise Exception(f"unable to fetch helm repository '{chart_url}'. {str(e)}")
+        raise urllib3.exceptions.HTTPError(f"unable to fetch helm repository '{chart_url}'. {str(e)}")
 
     if repo_response.status_code != 200:
-        raise Exception(f"'{chart_url}' returned: {repo_response.status_code}")
+        raise urllib3.exceptions.ResponseError(f"'{chart_url}' returned: {repo_response.status_code}")
 
     try:
         repo_charts = yaml.safe_load(repo_response.content)
     except Exception as e:
-        raise Exception(f"unable to parse '{chart_url}'. {str(e)}")
+        raise urllib3.exceptions.DecodeError(f"unable to parse '{chart_url}'. {str(e)}")
 
     return repo_charts['entries'].items()
 
 
 def get_chart_updates(repo_helm_charts: dict,
-                      argo_helm_charts: tuple,
+                      argo_helm_charts: List[dict],
                       enable_prereleases: bool = False) -> List[dict]:
-    """get_chart_updates [summary]
+    """get_chart_updates search new version in a helm chart
 
     Args:
-        repo_helm_charts (dict): [description]
-        argo_helm_charts (tuple): tuple containing (chart_name, {})
+        repo_helm_charts (dict): helm chart dict
+        argo_helm_charts (List[dict]): list of dict with following keys:
+                                       chart_name: name of chart
+                                       verion: current version of chart from ArgoCD manifest
+                                       yaml_path: path to ArgoCD manifest
         enable_prereleases (bool, optional): [description]. Defaults to False.
 
     Returns:
-        List[dict]: [description]
+        List[dict]: list of dict with following keys:
+                    chart_name: name of chart
+                    old_version: current version of chart from ArgoCD manifest
+                    new_version: newest available Helm chart version
+                    yaml_path: path to ArgoCD manifest
     """
     chart_updates = []
     for repo_helm_chart in repo_helm_charts:
@@ -309,14 +369,14 @@ def get_chart_updates(repo_helm_charts: dict,
                 }
                 chart_updates.append(repo_chart)
                 logging.info(f"found update for helm chart '{repo_chart['chart_name']}': "
-                                f"'{current_chart_version}' to '{latest_version[0]}'")
+                             f"'{current_chart_version}' to '{latest_version[0]}'")
                 continue
             logging.debug(f"no update found for helm chart '{repo_charts[0]}'. "
-                            f"current version in ansible helm task is '{current_chart_version}'")
+                          f"current version in ansible helm task is '{current_chart_version}'")
     return chart_updates
 
 
-def handle_gitlab(chart_updates: list,
+def handle_gitlab(chart_updates: List[dict],
                   gitlab_url: str,
                   gitlab_token: str,
                   project_id: int,
@@ -331,31 +391,41 @@ def handle_gitlab(chart_updates: list,
     """handle_gitlab handle gitlab workflow
 
     Args:
-        chart_updates (list): [description]
-        gitlab_url (str): [description]
-        gitlab_token (str): [description]
-        project_id (int): [description]
-        search_dir (str): [description]
-        assignees (List[str], optional): [description]. Defaults to [].
-        remove_source_branch (bool, optional): [description]. Defaults to False.
-        squash (bool, optional): [description]. Defaults to False.
-        automerge (bool, optional): [description]. Defaults to False.
-        merge_major (bool, optional): [description]. Defaults to False.
-        labels (List[str], optional): [description]. Defaults to [].
-        verify_ssl (bool, optional): [description]. Defaults to False.
+        chart_updates (list): list of dict with following keys:
+                              chart_name: name of chart
+                              old_version: current version of chart from ArgoCD manifest
+                              new_version: newest available Helm chart version
+                              yaml_path: path to ArgoCD manifest
+                              mr_link: url to merge request
+        gitlab_url (str): url to Gitlab
+        gitlab_token (str): The user private token
+        project_id (int): Gitlab project id
+        search_dir (str): path to directory to search
+        assignees (List[str], optional): list of strings with assignees. Defaults to [].
+        remove_source_branch (bool, optional): remove brunch after merge. Defaults to False.
+        squash (bool, optional): squash commits after merge. Defaults to False.
+        automerge (bool, optional): merge request automatically. Defaults to False.
+        merge_major (bool, optional): merge also major updates. Defaults to False.
+        labels (List[str], optional): list of labels to set. Defaults to [].
+        verify_ssl (bool, optional): check SSL certificate. Defaults to False.
 
     Raises:
-        ConnectionError: unable to connect to gitlab
-        ConnectionError: unable to get assignees
-        ConnectionError: cannot get Gitlab project
+        urllib3.exceptions.HTTPError: unable to connect to Gitlab
+        urllib3.exceptions.ResponseError: unable to get assignees
+        urllib3.exceptions.ResponseError: unable to get Gitlab project
 
     Returns:
-        [type]: [description]
+        List[dict]: list of dict with following keys:
+                    chart_name: name of chart
+                    old_version: current version of chart from ArgoCD manifest
+                    new_version: newest available Helm chart version
+                    yaml_path: path to ArgoCD manifest
+                    mr_link: url to merge request
     """
     try:
         conn = gitlab.Gitlab(url=gitlab_url,
-                            private_token=gitlab_token,
-                            ssl_verify=verify_ssl)
+                             private_token=gitlab_token,
+                             ssl_verify=verify_ssl)
     except Exception as e:
         raise ConnectionError(f"unable to connect to gitlab. {str(e)}")
 
@@ -364,13 +434,13 @@ def handle_gitlab(chart_updates: list,
             assignee_ids = get_assignee_ids(conn=conn,
                                             assignees=assignees)
     except Exception as e:
-        raise ConnectionError(f"unable to get assignees. {str(e)}")
+        raise urllib3.exceptions.ResponseError(f"unable to get assignees. {str(e)}")
 
     try:
         project = get_project(conn=conn,
                               project_id=project_id)
     except Exception as e:
-        raise ConnectionError(f"cannot get Gitlab project. {str(e)}")
+        raise urllib3.exceptions.ResponseError(f"cannot get Gitlab project. {str(e)}")
 
     # the yaml path in the search_dir does not correspond to the path in the Gitlab repo
     # exmple:
