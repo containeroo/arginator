@@ -217,7 +217,7 @@ def process_yaml(search_dir: str):
     argo_charts = []
     Argo = namedtuple("Argo", ['url', 'charts'])
     for item in argo_helm_charts.items():
-        tmp.append(Argo(url=item[0], charts=item[1]))
+        argo_charts.append(Argo(url=item[0], charts=item[1]))
 
     return argo_charts
 
