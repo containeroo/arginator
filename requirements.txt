@@ -1,5 +1,5 @@
-PyYAML==5.4.1
-requests==2.25.1
 python-gitlab==2.6.0
-slackclient==2.9.3
+requests==2.25.1
+ruamel.yaml==0.17.4
 semver==2.13.0
+slackclient==2.9.3
