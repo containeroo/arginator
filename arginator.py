@@ -219,7 +219,7 @@ def process_yaml(search_dir: str) -> Argo:
     """
     search_dir = Path(search_dir)
     argo_helm_charts = defaultdict(list)
-
+    counter = 0
     if not search_dir.is_dir():
         raise NotADirectoryError(f"'{search_dir}' is not a directory")
     for item in search_dir.glob("**/*"):
@@ -227,14 +227,15 @@ def process_yaml(search_dir: str) -> Argo:
             continue
         if item.suffix not in ['.yml', '.yaml']:
             continue
+        counter += 1
         try:
             with open(item) as stream:
                 content = yaml.load(stream)
         except Exception:
             # ignore unparsable yaml files, since argocd already does this
-            return
+            continue
         if not isinstance(content, dict):
-            return
+            continue
 
         if content.get("kind") != "Application":
             logging.debug(f"skip manifest '{item}' because it is not of kind 'Application'")
@@ -242,6 +243,10 @@ def process_yaml(search_dir: str) -> Argo:
         if content.get("spec") and not content['spec'].get("source"):
             logging.debug(f"skip manifest '{item}' because it does not contain the path 'spec.source'")
             continue
+        if not content['spec']['source'].get("helm"):
+            logging.debug(f"skip manifest '{item}' because it does not contain the path 'spec.source.helm'")
+            continue
+
         chart_name = content['spec']['source']['chart']
         repo_url = content['spec']['source']['repoURL']
         version = content['spec']['source']['targetRevision']
@@ -254,6 +259,7 @@ def process_yaml(search_dir: str) -> Argo:
             }
         )
 
+    logging.debug(f"processed {counter} yaml files")
     # convert list of tuple to namedTuple (Argo)
     argo_charts = []
     for item in argo_helm_charts.items():
@@ -276,6 +282,9 @@ def process_argo_helm_charts(argo_helm_charts: List[Argo]) -> List[dict]:
             yaml_path: path to ArgoCD manifest
     """
     chart_updates = []
+    if not argo_helm_charts:
+        return
+
     for argo_helm_chart in argo_helm_charts:
         chart_url = argo_helm_chart.url
         try:
@@ -1028,13 +1037,13 @@ def main():
     try:
         argo_helm_charts = process_yaml(search_dir=env_vars.search_dir)
     except Exception as e:
-        logging.critical(f"unable to process ansible yaml. {str(e)}")
+        logging.critical(f"unable to process ArgoCD manifest. {str(e)}")
         sys.exit(1)
 
     try:
         chart_updates = process_argo_helm_charts(argo_helm_charts=argo_helm_charts)
     except Exception as e:
-        logging.critical(f"unable to process ansible yaml. {str(e)}")
+        logging.critical(f"unable to process helm charts. {str(e)}")
         sys.exit(1)
 
     if env_vars.enable_mergerequests and chart_updates:
