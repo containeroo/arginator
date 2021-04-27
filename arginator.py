@@ -1,3 +1,4 @@
+import base64
 import logging
 import logging.handlers
 import os
@@ -260,6 +261,7 @@ def process_yaml(search_dir: str) -> Argo:
         )
 
     logging.debug(f"processed {counter} yaml files")
+
     # convert list of tuple to namedTuple (Argo)
     argo_charts = []
     for item in argo_helm_charts.items():
