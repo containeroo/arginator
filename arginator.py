@@ -609,6 +609,8 @@ def update_project(project: Project,
 
     mergerequest_title = templates.merge_request_title.format(CHART_NAME=chart_name,
                                                               NEW_VERSION=new_version)
+    mr = None
+    config = ""
 
     try:
         merge_request = eval_merge_requests(project=project,
@@ -619,9 +621,6 @@ def update_project(project: Project,
 
     if merge_request.closed:
         return
-
-    if merge_request.exists:
-        pass # go on, maybe a file update is needed
 
     is_major = (semver.VersionInfo.parse(new_version.lstrip("v")).major >
                 semver.VersionInfo.parse(old_version.lstrip("v")).major)
@@ -644,8 +643,7 @@ def update_project(project: Project,
                                                CONFIG=config)
     branch_name = templates.branch_name.format(CHART_NAME=chart_name)
 
-    mr = None
-    if merge_request.update:
+    if merge_request.update or merge_request.exists:
         try:
             mr = get_merge_request_by_title(project=project,
                                             title=pattern.mr_title.format(CHART_NAME=chart_name),
@@ -706,12 +704,20 @@ def update_project(project: Project,
 
     try:
         if automerge:
+            if mr.merge_status == "cannot_be_merged":
+                raise Exception("merge request is unable to be accepted (such as Draft, Closed, Pipeline Pending "
+                                "Completion, or Failed while requiring Success)")
+            if mr.has_conflicts:
+                raise Exception("There are some conflicts")
+            if mr.work_in_progress:
+                raise Exception("MR ist 'work in progress'")
+
             mr.merge(merge_when_pipeline_succeeds=True)
     except GitlabAuthenticationError as e:
         raise GitlabAuthenticationError(
                 "Authentication not set correctly. 'Arginator' User must have the role 'Maintainer'")
     except Exception as e:
-        raise Exception(f"cannot merge MR. {e}")
+        raise Exception(f"cannot merge MR. {e.error_message}")
 
     return mr
 
