@@ -1,5 +1,9 @@
 # Arginator
 
+# DEPRECIATION WARNING
+
+Renovate will add a manager for argo-cd, see [here](https://github.com/renovatebot/renovate/pull/9771)
+
 ![Docker Image Version (latest semver)](https://img.shields.io/docker/v/containeroo/arginator?style=flat-square)
 ![Docker Pulls](https://img.shields.io/docker/pulls/containeroo/arginator?style=flat-square)
 ![Docker Image Size (tag)](https://img.shields.io/docker/image-size/containeroo/arginator/latest?style=flat-square)
